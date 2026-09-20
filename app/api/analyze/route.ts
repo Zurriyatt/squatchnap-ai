@@ -235,9 +235,18 @@ export async function POST(req: NextRequest) {
 
                 let aiRes = null;
                 const candidates = [
-                    // Tier 1: Ultra-Fast / Low-Latency (Absolute lowest TTFT, highest resilience against 503s)
+                    // Tier 1: Flagship Frontier Flash (Smartest, Best for Long Coding/Complex Workflows)
+                    "gemini-3.8-flash", // Latest stable flagship
+                    "gemini-3.7-flash", // High stability, great everyday driver
+                    "gemini-3.6-flash", // Optimized for multi-step tasks
+
+                    // Tier 2: High-Performance Stable Flash
+                    "gemini-3.5-flash", // Heavily provisioned, excellent for fallback
+                    "gemini-2.5-flash", // Extremely stable older fallback tier
+
+                    // Tier 3: Ultra-Fast / Low-Latency (Highly resilient against 503s)
                     "gemini-3.5-flash-lite", // Built for top speeds & minimal costs
-                    "gemini-2.5-flash-lite", // Ultimate speed floor for massive scale
+                    "gemini-2.5-flash-lite", // Ultimate emergency floor for massive scale
                 ];
 
                 for (const modelName of candidates) {
@@ -249,8 +258,8 @@ export async function POST(req: NextRequest) {
                         aiRes = await model.generateContent(prompt);
                         if (aiRes) break; // Success! Exit loop.
                     } catch (err) {
-                        let error = err instanceof Error ? err.message : "Ai Verification failed";
-
+                      let error = err instanceof Error ? err.message : "Ai Verification failed"
+                      
                         console.warn(`Model ${modelName} error:`, error);
                     }
                 }
