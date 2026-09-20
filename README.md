@@ -1,37 +1,22 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ⚡ SquatchNap AI — B2B Deal Qualification & Verification Engine
+> Built for the **Caprae Capital AI-Readiness Pre-Screening Challenge**  
+> Direct Enhancement for **SaaSQuatch Leads** (`saasquatchleads.com`)
 
-## Getting Started
+![SquatchNap AI Banner](/public/og-image.png)
 
-First, run the development server:
+---
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## 1. Executive Summary & Business Rationale
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Traditional scraping tools (like SaaSQuatch) generate raw, unverified lists of companies from Google Maps and web directories. However, in Private Equity (PE) and Entrepreneurship Through Acquisition (ETA), raw data creates an operational bottleneck:
+1. **Dirty Data & Churn:** 20–30% of scraped websites are dead (404), parked, or protected behind anti-bot firewalls (403). Sales reps waste hours verifying links manually.
+2. **The "Old UI" Paradox:** In traditional sales outreach, an outdated website is discarded. In PE/ETA, an outdated website with strong underlying cash flow is a **prime acquisition target** because Caprae can modernize it with proprietary internal AI.
+3. **Black-Box Skepticism:** Investment committees reject arbitrary scores. A score must be mathematically audited with visible evidence.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+**SquatchNap AI** acts as the automated Deal Analyst sitting directly on top of SaaSQuatch. It validates live HTTP handshakes, bypasses token waste on dead domains, extracts founder contacts, and generates **explainable 100-point acquisition scores** backed by an audit trail.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+---
 
-## Learn More
+## 2. Core Architecture & Pipeline Lifecycle
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
-"# squatchnap-ai" 
+SquatchNap processes targets through a **5-station fail-fast assembly line**:
