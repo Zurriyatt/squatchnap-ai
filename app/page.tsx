@@ -1,69 +1,136 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
-  return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
+import { useState } from "react";
+import type { EnrichedLead } from "@/types/lead";
+import { TopBar } from "@/components/TopBar";
+import { Telemetry } from "@/components/Telemetry";
+import { Ingestion } from "@/components/Ingestion";
+import { DealMatrix } from "@/components/DealMatrix";
+import { AuditDrawer } from "@/components/AuditDrawer";
+import { ColumnMapperModal } from "@/components/ColumnMapperModal";
+
+export default function App() {
+    const [csvData, setCsvData] = useState<{ columns: string[]; rows: any[]; fileName: string }>({
+        columns: [],
+        rows: [],
+        fileName: "",
+    });
+
+    // 1. Master state for all analyzed leads
+    const [leads, setLeads] = useState<EnrichedLead[]>([]);
+
+    // 2. Active lead for the slide-over inspection drawer
+    const [active, setActive] = useState<EnrichedLead | null>(null);
+
+    // 3. Modal state for ambiguous CSV mapping
+    const [mapperOpen, setMapperOpen] = useState(false);
+
+    // 4. Function to add newly analyzed leads to our matrix
+    const handleLeadsProcessed = (newLeads: EnrichedLead[]) => {
+        setLeads((prev) => [...newLeads, ...prev]);
+    };
+
+    // 5. 1-Click CSV Export
+    const handleExportCSV = () => {
+        if (leads.length === 0) return;
+        const headers = "Company,Domain,Status,HTTP Code,Business Models,Score,Summary,Contact Email,Pitch Hook\n";
+        const rows = leads
+            .map(
+                (l) =>
+                    `"${l.companyName}","${l.domain}","${l.status}","${l.httpStatusCode}","${(l.businessModels || []).join("; ")}",${
+                        typeof l.score === "object" ? l.score.total : l.score
+                    },"${l.summary.replace(/"/g, '""')}","${l.contactEmail || ""}","${(l.coldOutreachHook || "").replace(/"/g, '""')}"`,
+            )
+            .join("\n");
+
+        const blob = new Blob([headers + rows], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.setAttribute("download", `squatchnap_leads_${new Date().toISOString().slice(0, 10)}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+    const handleCsvAmbiguous = (columns: string[], rows: any[], fileName: string) => {
+        setCsvData({ columns, rows, fileName });
+        setMapperOpen(true);
+    };
+
+    // When user picks the column and clicks Confirm in the modal
+    const handleModalConfirm = async (domains: string[]) => {
+        for (const singleDomain of domains) {
+            try {
+                const res = await fetch("/api/analyze", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ url: singleDomain }),
+                });
+                const data = await res.json();
+                if (data.success && data.lead) {
+                    setLeads((prev) => [data.lead, ...prev]);
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+    };
+
+    return (
+        <div className="min-h-screen bg-canvas text-zinc-100 font-sans">
+            {/* TopBar with live Export button */}
+            <TopBar onExport={handleExportCSV} exportEnabled={leads.length > 0} />
+
+            <main className="mx-auto max-w-[1440px] px-6 py-8">
+                {/* 1. Context / Hero */}
+                <section className="mb-6 max-w-2xl">
+                    <h1 className="text-2xl font-semibold tracking-tight text-white sm:text-[28px]">
+                        Check and rank companies you might want to buy —{" "}
+                        <span className="text-amber-400">automatically</span>
+                    </h1>
+                    <p className="mt-2 text-sm leading-relaxed text-zinc-400">
+                        Paste a list of websites or drop a spreadsheet from Apollo or Google Maps. SquatchNap visits
+                        each site, figures out what the company sells, and gives it a score so you know which ones are
+                        worth your time.
+                    </p>
+                </section>
+
+                {/* 2. Action / Ingestion — passes new leads up */}
+                <Ingestion setLeads={setLeads} onCsvAmbiguous={handleCsvAmbiguous} />
+
+                {/* 3. Outcome — Telemetry + Qualified Deal Matrix */}
+                <div className="mt-8">
+                    <div className="mb-3 flex items-center gap-2">
+                        <div className="h-4 w-1 rounded-full bg-amber-500" />
+                        <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Results</h2>
+                    </div>
+                    <div className="space-y-4">
+                        {/* Live Telemetry Cards */}
+                        <Telemetry leads={leads} />
+
+                        {/* Live Deal Matrix Table */}
+                        <DealMatrix leads={leads} onInspect={setActive} activeId={active?.id ?? null} />
+                    </div>
+                </div>
+            </main>
+
+            {/* Dynamic State A: Guided Schema Fallback Modal */}
+            {mapperOpen && (
+                <ColumnMapperModal
+                    columns={csvData.columns}
+                    rows={csvData.rows}
+                    fileName={csvData.fileName}
+                    onClose={() => setMapperOpen(false)}
+                    onConfirm={handleModalConfirm}
+                />
+            )}
+
+            {/* Dynamic State B: Progressive Disclosure Slide-Over Panel */}
+                        <AuditDrawer 
+                lead={active} 
+                onClose={() => setActive(null)} 
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+
         </div>
-      </main>
-    </div>
-  );
+    );
 }

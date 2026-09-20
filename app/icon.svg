@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <defs>
+    <linearGradient id="squatchGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f59e0b" />
+      <stop offset="100%" stop-color="#d97706" />
+    </linearGradient>
+    <linearGradient id="shieldBg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#18181b" />
+      <stop offset="100%" stop-color="#09090b" />
+    </linearGradient>
+  </defs>
+
+  <!-- Hexagonal Container with Subtle Border -->
+  <rect width="32" height="32" rx="8" fill="url(#shieldBg)" stroke="#27272a" stroke-width="1.5"/>
+
+  <!-- Amber Synaptic Monogram (S + Pulse Signal) -->
+  <path 
+    d="M20 10.5C20 9.12 18.88 8 17.5 8H12C10.9 8 10 8.9 10 10C10 11.1 10.9 12 12 12H19C20.66 12 22 13.34 22 15C22 16.66 20.66 18 19 18H15L13 22H11L13.5 17H12C10.34 17 9 15.66 9 14" 
+    fill="none" 
+    stroke="url(#squatchGradient)" 
+    stroke-width="2.2" 
+    stroke-linecap="round" 
+    stroke-linejoin="round"
+  />
+
+  <!-- Active Intelligence Signal Dot -->
+  <circle cx="21.5" cy="9.5" r="1.5" fill="#10b981" />
+</svg>
