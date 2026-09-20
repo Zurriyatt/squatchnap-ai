@@ -51,10 +51,6 @@ export function TopBar({
 
         {/* Right: actions */}
         <div className="ml-auto flex items-center gap-2.5">
-          <button className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium text-zinc-400 transition-colors hover:bg-surface hover:text-white">
-            <Download width={15} height={15} />
-            <span className="hidden sm:inline">CSV Template</span>
-          </button>
           <button
           onClick={onExport}
             disabled={!exportEnabled}
