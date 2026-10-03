@@ -6,6 +6,73 @@ import type { EnrichedLead, LeadStatus } from "@/types/lead";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 export const maxDuration = 10;
+
+// ─── Heuristic fallback (used when LLM fails) ──────────────────────
+function heuristicScore(opts: {
+    title: string;
+    meta: string;
+    bodyText: string;
+    hasEmail: boolean;
+    hasSocials: boolean;
+}) {
+    const { title, meta, bodyText, hasEmail, hasSocials } = opts;
+    const hay = `${title} ${meta} ${bodyText}`.toLowerCase();
+    const signals: any[] = [];
+
+    // Business viability (max 30)
+    let bv = 0;
+    if (bodyText.length > 500) {
+        bv += 12;
+        signals.push({ category: "businessViability", label: "Substantive Site Copy", weight: 12, evidence: `${bodyText.length} chars of readable body text` });
+    }
+    if (/\b(b2b|enterprise|for business|our clients|case stud)\b/.test(hay)) {
+        bv += 8;
+        signals.push({ category: "businessViability", label: "B2B Positioning Detected", weight: 8, evidence: "Matched B2B/enterprise language in body copy" });
+    }
+    if (/\b(pricing|plans?|subscribe|tier)\b/.test(hay)) {
+        bv += 6;
+        signals.push({ category: "businessViability", label: "Productized Offering", weight: 6, evidence: "Pricing/plans language present on site" });
+    }
+
+    // Recurring model (max 25)
+    let rm = 0;
+    if (/\b(subscription|monthly|annually|retainer|recurring|\/mo|\/month)\b/.test(hay)) {
+        rm += 15;
+        signals.push({ category: "recurringModel", label: "Recurring Revenue Language", weight: 15, evidence: "Subscription/recurring keywords in copy" });
+    }
+    if (/\$\d/.test(hay)) {
+        rm += 8;
+        signals.push({ category: "recurringModel", label: "Published Pricing", weight: 8, evidence: "Dollar amounts present in site copy" });
+    }
+
+    // Modernization upside (max 25) — baseline only in heuristic mode
+    const mu = 10;
+    signals.push({ category: "modernizationUpside", label: "Baseline Upside Estimate", weight: 10, evidence: "Heuristic mode — full modernization analysis unavailable without LLM" });
+
+    // Outreach feasibility (max 20)
+    let of = 0;
+    if (hasEmail) {
+        of += 12;
+        signals.push({ category: "outreachFeasibility", label: "Contact Email Found", weight: 12, evidence: "Direct email scraped from page HTML" });
+    }
+    if (hasSocials) {
+        of += 6;
+        signals.push({ category: "outreachFeasibility", label: "Social Channels Present", weight: 6, evidence: "LinkedIn/Twitter/GitHub links detected" });
+    }
+
+    const total = Math.min(100, bv + rm + mu + of);
+    return {
+        total,
+        breakdown: {
+            businessViability: Math.min(30, bv),
+            recurringModel: Math.min(25, rm),
+            modernizationUpside: Math.min(25, mu),
+            outreachFeasibility: Math.min(20, of),
+        },
+        signals,
+    };
+}
+
 export async function POST(req: NextRequest) {
     try {
         const { url } = await req.json();
@@ -33,7 +100,7 @@ export async function POST(req: NextRequest) {
             .replace(/[^a-zA-Z0-9]/g, "")
             .slice(0, 10)}`;
 
-        // 2. Fast 4-Second Live HTTP Handshake (Fail-Fast for Vercel)
+        // 2. Fast 2.5-Second Live HTTP Handshake
         let html = "";
         let httpStatusCode = "0";
         let status: LeadStatus = "DEAD_INACTIVE";
@@ -41,7 +108,7 @@ export async function POST(req: NextRequest) {
 
         try {
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 4000); // Strict 4s timeout
+            const timeoutId = setTimeout(() => controller.abort(), 2500);
 
             const response = await fetch(cleanUrl, {
                 method: "GET",
@@ -60,8 +127,9 @@ export async function POST(req: NextRequest) {
 
             if (response.status === 200) {
                 status = "VERIFIED_ALIVE";
-                html = await response.text();
-            } else if (response.status === 403 || response.status === 429) {
+                const rawHtml = await response.text();
+                html = rawHtml.length > 400_000 ? rawHtml.slice(0, 400_000) : rawHtml;
+            } else if (response.status === 403 || response.status === 429 || response.status === 503) {
                 status = "BOT_SHIELDED";
             } else {
                 status = "DEAD_INACTIVE";
@@ -76,7 +144,7 @@ export async function POST(req: NextRequest) {
             }
         }
 
-        // 3. Handle Shielded / Dead / Timeout Sites (Zero AI Token Waste)
+        // 3. Handle Shielded / Dead / Timeout Sites
         if (status === "BOT_SHIELDED") {
             const shieldedLead: EnrichedLead = {
                 id: leadId,
@@ -128,20 +196,12 @@ export async function POST(req: NextRequest) {
                 aiConfidence: 0.9,
                 score: {
                     total: 0,
-                    breakdown: {
-                        businessViability: 0,
-                        recurringModel: 0,
-                        modernizationUpside: 0,
-                        outreachFeasibility: 0,
-                    },
+                    breakdown: { businessViability: 0, recurringModel: 0, modernizationUpside: 0, outreachFeasibility: 0 },
                 },
                 signals: [
                     {
                         category: "businessViability",
-                        label:
-                            status === "TIMEOUT_SLOW"
-                                ? "Server Handshake Exceeded 4s Limit"
-                                : "Domain Unreachable / Parked",
+                        label: status === "TIMEOUT_SLOW" ? "Server Handshake Exceeded 2.5s Limit" : "Domain Unreachable / Parked",
                         weight: -50,
                         evidence: `HTTP Status Code: ${httpStatusCode}`,
                     },
@@ -149,18 +209,19 @@ export async function POST(req: NextRequest) {
                 summary: "Target domain is inaccessible, offline, or DNS resolution failed.",
                 coldOutreachHook: "N/A - Domain offline",
             };
-            return NextResponse.json({ success: false, lead: deadLead });
+            return NextResponse.json({ success: true, lead: deadLead });
         }
 
-        // 4. DOM Parsing & Sanitization with Cheerio
+        // 4. DOM Parsing & Sanitization
         const $ = cheerio.load(html);
         $("script, style, svg, noscript, iframe, nav, footer, header").remove();
 
         const title = $("title").text().trim() || apexDomain;
         const metaDescription =
-            $('meta[name="description"]').attr("content") || $('meta[property="og:description"]').attr("content") || "";
+            $('meta[name="description"]').attr("content") ||
+            $('meta[property="og:description"]').attr("content") ||
+            "";
 
-        // Extract Headings
         const headings: string[] = [];
         $("h1, h2")
             .slice(0, 6)
@@ -169,7 +230,6 @@ export async function POST(req: NextRequest) {
                 if (text && text.length > 5) headings.push(text);
             });
 
-        // Extract Contact Email
         const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/gi;
         const matchedEmails = html.match(emailRegex) || [];
         const validEmails = matchedEmails.filter(
@@ -177,102 +237,163 @@ export async function POST(req: NextRequest) {
         );
         const contactEmail = validEmails[0] || undefined;
 
-        // Extract Socials
         const detectedSocials: EnrichedLead["detectedSocials"] = {};
         $("a[href]").each((_, el) => {
             const href = $(el).attr("href") || "";
             if (href.includes("linkedin.com/company") && !detectedSocials.linkedin) detectedSocials.linkedin = href;
-            if ((href.includes("twitter.com/") || href.includes("x.com/")) && !detectedSocials.twitter)
-                detectedSocials.twitter = href;
+            if ((href.includes("twitter.com/") || href.includes("x.com/")) && !detectedSocials.twitter) detectedSocials.twitter = href;
             if (href.includes("github.com/") && !detectedSocials.github) detectedSocials.github = href;
         });
 
-        const pageContext = `
-    Domain: ${apexDomain}
-    Title: ${title}
-    Meta Description: ${metaDescription}
-    Core Headings: ${headings.join(" | ")}
-    Found Email: ${contactEmail || "None"}
-    Found Socials: ${Object.keys(detectedSocials).join(", ") || "None"}
-    `;
+        const bodyText = $("body").text().replace(/\s+/g, " ").trim().slice(0, 2500);
 
-        // 5. Gemini AI Engine
+        const pageContext = `
+Domain: ${apexDomain}
+Title: ${title}
+Meta Description: ${metaDescription}
+Headings: ${headings.join(" | ")}
+Email: ${contactEmail || "None"}
+Socials: ${Object.keys(detectedSocials).join(", ") || "None"}
+
+BODY TEXT (only cite facts that appear below):
+${bodyText}
+`;
+
+        // 5. Gemini AI Engine — model cascade with hard time budget
         let aiOutput: any = null;
+        let llmDiagnostic = "not_attempted";
 
         if (process.env.GEMINI_API_KEY) {
             try {
-                const prompt = `
-        You are an elite M&A and Private Equity Deal Analyst for Caprae Capital.
-        Analyze this company website footprint and return strict JSON with this EXACT structure:
-        {
-          "companyName": "string",
-          "businessModels": ["B2B SaaS" | "Agency" | "E-Commerce" | "Manufacturing" | "Local Service" | "Enterprise"],
-          "aiConfidence": number between 0.0 and 1.0,
-          "score": {
-            "total": number between 1 and 100,
-            "breakdown": {
-              "businessViability": number (max 30),
-              "recurringModel": number (max 25),
-              "modernizationUpside": number (max 25 - high if solid business but legacy/outdated tech),
-              "outreachFeasibility": number (max 20)
-            }
-          },
-          "signals": [
-            {
-              "category": "businessViability" | "recurringModel" | "modernizationUpside" | "outreachFeasibility",
-              "label": "Short description of signal",
-              "weight": number (+15 or -10),
-              "evidence": "Direct proof from context"
-            }
-          ],
-          "summary": "1 punchy sentence describing what they sell",
-          "coldOutreachHook": "A 2-sentence hyper-personalized cold outreach icebreaker tailored to their business"
-        }
+                const prompt = `You are an M&A analyst for Caprae Capital. Analyze this website and return ONLY valid JSON.
 
-        Website Data:
-        ${pageContext}
-        `;
+{
+  "companyName": string,
+  "businessModels": string[],
+  "aiConfidence": number,
+  "score": {
+    "total": number,
+    "breakdown": {
+      "businessViability": number,
+      "recurringModel": number,
+      "modernizationUpside": number,
+      "outreachFeasibility": number
+    }
+  },
+  "signals": [{"category": "businessViability"|"recurringModel"|"modernizationUpside"|"outreachFeasibility", "label": string, "weight": number, "evidence": string}],
+  "summary": string,
+  "coldOutreachHook": string
+}
 
-                let aiRes = null;
+CONSTRAINTS:
+- score.total MUST be between 1 and 100. NEVER 0.
+- breakdown.max: businessViability=30, recurringModel=25, modernizationUpside=25, outreachFeasibility=20
+- modernizationUpside is HIGH if strong business + outdated/legacy site (Caprae PE signal). LOW if modern.
+- Emit 3-6 signals. Evidence MUST quote the site directly.
+- summary: 1 sentence. coldOutreachHook: 2 sentences personalized.
+- Return raw JSON only, no markdown fences.
+
+Website Data:
+${pageContext}`;
+
                 const candidates = [
-                    // Tier 1: Flagship Frontier Flash (Smartest, Best for Long Coding/Complex Workflows)
-                    "gemini-3.8-flash", // Latest stable flagship
-                    "gemini-3.7-flash", // High stability, great everyday driver
-                    "gemini-3.6-flash", // Optimized for multi-step tasks
-
-                    // Tier 2: High-Performance Stable Flash
-                    "gemini-3.5-flash", // Heavily provisioned, excellent for fallback
-                    "gemini-2.5-flash", // Extremely stable older fallback tier
-
-                    // Tier 3: Ultra-Fast / Low-Latency (Highly resilient against 503s)
-                    "gemini-3.5-flash-lite", // Built for top speeds & minimal costs
-                    "gemini-2.5-flash-lite", // Ultimate emergency floor for massive scale
+                    "gemini-3.5-flash-lite",
+                    'gemini-3.1-flash-lite',
+                    "gemini-3.8-flash",
+        
                 ];
 
+                const TOTAL_LLM_BUDGET_MS = 6500;
+                const llmStart = Date.now();
+
                 for (const modelName of candidates) {
+                    const elapsed = Date.now() - llmStart;
+                    const remaining = TOTAL_LLM_BUDGET_MS - elapsed;
+
+                    if (remaining < 800) {
+                        llmDiagnostic = `budget_exhausted_after_${elapsed}ms`;
+                        console.error(`[llm] ${llmDiagnostic}`);
+                        break;
+                    }
+
                     try {
                         const model = genAI.getGenerativeModel({
                             model: modelName,
                             generationConfig: { responseMimeType: "application/json" },
                         });
-                        aiRes = await model.generateContent(prompt);
-                        if (aiRes) break; // Success! Exit loop.
+
+                        const llmPromise = model.generateContent(prompt);
+
+                        let timeoutHandle: any;
+                        const timeoutPromise = new Promise<never>((_, reject) => {
+                            timeoutHandle = setTimeout(() => reject(new Error("MODEL_TIMEOUT")), remaining);
+                        });
+
+                        try {
+                            const aiRes = await Promise.race([llmPromise, timeoutPromise]);
+                            clearTimeout(timeoutHandle);
+
+                            if (aiRes) {
+                                const raw = aiRes.response.text();
+                                aiOutput = JSON.parse(raw);
+                                llmDiagnostic = `ok_${modelName}`;
+                                console.error(`[llm] SUCCESS via ${modelName}`);
+                                break;
+                            }
+                        } catch (raceErr) {
+                            clearTimeout(timeoutHandle);
+                            throw raceErr;
+                        }
                     } catch (err) {
-                      let error = err instanceof Error ? err.message : "Ai Verification failed"
-                      
-                        console.warn(`Model ${modelName} error:`, error);
+                        const msg = err instanceof Error ? err.message : String(err);
+                        console.error(`[llm] ${modelName} FAILED: ${msg}`);
+                        llmDiagnostic = `fail_${modelName}_${msg.slice(0, 40)}`;
                     }
                 }
-
-                if (aiRes) {
-                    aiOutput = JSON.parse(aiRes.response.text());
-                }
             } catch (e) {
-                console.error("Gemini call error:", e);
+                console.error("Gemini outer error:", e);
+                llmDiagnostic = "outer_error";
             }
+        } else {
+            llmDiagnostic = "no_api_key";
         }
 
-        const fallbackLead: EnrichedLead = {
+        // 6. Score — LLM if available, otherwise heuristic
+        let finalScore: any;
+        let finalSignals: any[];
+        let finalConfidence: number;
+        let finalSummary: string;
+        let finalHook: string;
+        let finalCompany: string;
+        let finalModels: string[];
+
+        if (aiOutput && aiOutput.score && typeof aiOutput.score.total === "number" && aiOutput.score.total > 0) {
+            finalScore = aiOutput.score;
+            finalSignals = aiOutput.signals || [];
+            finalConfidence = aiOutput.aiConfidence || 0.8;
+            finalSummary = aiOutput.summary || metaDescription || "Active web property.";
+            finalHook = aiOutput.coldOutreachHook || `Noticed ${apexDomain} online — open to a short conversation?`;
+            finalCompany = aiOutput.companyName || title.split(/[-|]/)[0].trim() || apexDomain;
+            finalModels = aiOutput.businessModels || ["B2B Technology"];
+        } else {
+            // Heuristic fallback — never returns 0 for a live site
+            const h = heuristicScore({
+                title,
+                meta: metaDescription,
+                bodyText,
+                hasEmail: !!contactEmail,
+                hasSocials: Object.keys(detectedSocials).length > 0,
+            });
+            finalScore = { total: h.total, breakdown: h.breakdown };
+            finalSignals = h.signals;
+            finalConfidence = 0.45;
+            finalSummary = metaDescription || `Live site at ${apexDomain} — scored heuristically.`;
+            finalHook = `Noticed ${apexDomain} online — would love a short conversation about what modern tooling could unlock.`;
+            finalCompany = title.split(/[-|]/)[0].trim() || apexDomain;
+            finalModels = ["Unclassified"];
+        }
+
+        const lead: EnrichedLead = {
             id: leadId,
             rawInput: url,
             domain: apexDomain,
@@ -280,41 +401,20 @@ export async function POST(req: NextRequest) {
             status: "VERIFIED_ALIVE",
             httpStatusCode: "200",
             scrapedAt: new Date().toISOString(),
-            companyName: aiOutput?.companyName || title.split(/[-|]/)[0].trim() || apexDomain,
-            businessModels: aiOutput?.businessModels || ["B2B Technology"],
-            contactEmail: contactEmail,
-            detectedSocials: detectedSocials,
-            aiConfidence: aiOutput?.aiConfidence || 0.85,
-            score: aiOutput?.score || {
-                total: 78,
-                breakdown: {
-                    businessViability: 24,
-                    recurringModel: 20,
-                    modernizationUpside: 18,
-                    outreachFeasibility: 16,
-                },
-            },
-            signals: aiOutput?.signals || [
-                {
-                    category: "businessViability",
-                    label: "Active Web Property & Clear Title",
-                    weight: 20,
-                    evidence: title,
-                },
-                {
-                    category: "outreachFeasibility",
-                    label: contactEmail ? "Direct Inbound Email Discovered" : "Social Profiles Detected",
-                    weight: contactEmail ? 20 : 10,
-                    evidence: contactEmail || "LinkedIn/Twitter handles active",
-                },
-            ],
-            summary: aiOutput?.summary || metaDescription || "Active digital web property.",
-            coldOutreachHook:
-                aiOutput?.coldOutreachHook ||
-                `Loved your positioning at ${apexDomain}—would love to share how Caprae scales post-acquisition operations with proprietary internal software.`,
+            companyName: finalCompany,
+            businessModels: finalModels,
+            contactEmail,
+            detectedSocials,
+            aiConfidence: finalConfidence,
+            score: finalScore,
+            signals: finalSignals,
+            summary: finalSummary,
+            coldOutreachHook: finalHook,
+            // @ts-ignore — diagnostic field
+            analysisNote: llmDiagnostic,
         };
 
-        return NextResponse.json({ success: true, lead: fallbackLead });
+        return NextResponse.json({ success: true, lead });
     } catch (globalError: any) {
         console.error("Global analysis error:", globalError);
         return NextResponse.json(
