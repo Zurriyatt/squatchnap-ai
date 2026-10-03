@@ -265,7 +265,9 @@ ${bodyText}
 
         if (process.env.GEMINI_API_KEY) {
             try {
-                const prompt = `You are an M&A analyst for Caprae Capital. Analyze this website and return ONLY valid JSON.
+                const prompt = `You are an M&A analyst for Caprae Capital — a PE/ETA firm that acquires small, profitable businesses ($500K–$10M EBITDA, <200 employees) and modernizes them with AI. Score this website as a potential acquisition target.
+
+Return ONLY raw JSON (no markdown fences):
 
 {
   "companyName": string,
@@ -285,13 +287,83 @@ ${bodyText}
   "coldOutreachHook": string
 }
 
-CONSTRAINTS:
-- score.total MUST be between 1 and 100. NEVER 0.
-- breakdown.max: businessViability=30, recurringModel=25, modernizationUpside=25, outreachFeasibility=20
-- modernizationUpside is HIGH if strong business + outdated/legacy site (Caprae PE signal). LOW if modern.
+═══ THE CAPRAE TARGET PROFILE — WHAT SCORES 75-95 ═══
+
+A small, cash-flowing business ($1M-$20M revenue, 10-200 employees) with:
+- A dated or functionally outdated website (built 2015-2020, generic WordPress template, aging branding)
+- Recurring or retainer revenue (service contracts, subscriptions, maintenance plans)
+- A reachable owner (email, phone, contact page)
+- Clear commercial intent (case studies, testimonials, pricing or "request quote")
+
+THIS PROFILE IS THE PRODUCT. Score it 75-95. If a plumber with a 2018 WordPress site and $49/mo maintenance contracts scores below 75, you have failed the assignment.
+
+═══ PILLAR 1 — BUSINESS VIABILITY (0-30) ═══
+
+SMB in the target band (10-200 employees, $1M-$20M revenue, acquirable):
+→ 26-30 points. This is the top of the range. Score it high.
+
+Real business but too large for Caprae:
+- Publicly traded / mega-cap (Stripe, Cloudflare, LinkedIn): 10-14
+- Owned by Big Tech (Microsoft, Google, Adobe): 10-14
+- Late-stage VC ($500M+ valuation): 12-16
+- Global consumer brand (100M+ users): 10-14
+- Headcount >500: 12-16
+
+PE firms / search funds / VCs — competitors, not targets: 14-18
+
+Signals that bump SMB scores:
+- Named clients or case studies: +4
+- Pricing or plans page: +4
+- Founder/team page visible: +3
+
+═══ PILLAR 2 — RECURRING MODEL (0-25) ═══
+
+- Explicit subscription tiers ($X/mo, $Y/yr): 22-25
+- Retainer / recurring contracts (maintenance plans, service agreements): 20-25
+- Transactional / usage-based: 14-18
+- Advisory / project-based fees: 12-16
+- One-time sales only: 6-10
+
+═══ PILLAR 3 — MODERNIZATION UPSIDE (0-25) — THE CAPRAE SIGNAL ═══
+
+This is the reason Caprae acquires small businesses. How much would AI modernization and modern tooling improve this business?
+
+HIGH (22-25): dated UI, table layouts, jQuery-era patterns, no mobile viewport, copyright 3+ years stale, PDF-heavy workflows, no self-serve — AND clear revenue signals.
+MEDIUM (10-16): functional but old-school design, generic WordPress theme, dated color palette or typography.
+LOW (0-6): modern, responsive, polished, contemporary design.
+
+CRITICAL: Stripe, Linear, Vercel, Figma have world-class sites. Modern polished sites = 0-6, period. Do NOT award modernization upside to modern companies.
+
+═══ PILLAR 4 — OUTREACH FEASIBILITY (0-20) ═══
+
+- Direct founder/owner email visible: +14
+- Named leadership + phone visible: +7
+- Active social handles: +4
+- Opaque enterprise contact form only: 6-10
+
+═══ CALIBRATION — MATCH THESE BANDS EXACTLY ═══
+
+TARGET PROFILE (score 78-95):
+→ Local plumber, HVAC, roofing, dental, landscaping, or small agency with a dated site and clear revenue. If you evaluate this profile and output less than 75, you have misinterpreted the assignment.
+
+REAL BUSINESS, MODERN SITE (score 55-72):
+→ Basecamp, Ghost, HEY, Sentry, Railway, Fly.io, Render, Supabase, PlanetScale. Modern polished site, real revenue, but no modernization alpha.
+
+MEGA-CAP / DISQUALIFIED (score 20-40):
+→ Stripe, Cloudflare, LinkedIn, GitHub, Notion, Figma. Excellent businesses, not acquirable.
+
+PE / SEARCH FUND / VC (score 45-62):
+→ Trilogy Search Partners, ETA Equity, Brydon, Search Fund Partners. Competitors, not targets.
+
+═══ CONSTRAINTS ═══
+
+- score.total = sum of the four breakdown values, clamped 0-100.
 - Emit 3-6 signals. Evidence MUST quote the site directly.
+- businessModels: 1-3 SHORT category labels only (e.g. "B2B SaaS", "Agency", "Local Service", "Search Fund", "Private Equity", "E-commerce"). NEVER paste prompt text or pillar descriptions. Labels MUST be ≤4 words.
+- If the site is a mega-cap, Big Tech owned, or late-stage VC: emit a signal under businessViability with negative weight like "Deal-Fit Disqualifier: Mega-Cap" evidence "Stripe is a $65B fintech, not an acquirable SMB target".
+- If the site is a target-profile SMB: emit a signal under modernizationUpside with weight +22-25 and evidence quoting the actual site copy.
 - summary: 1 sentence. coldOutreachHook: 2 sentences personalized.
-- Return raw JSON only, no markdown fences.
+- Return raw JSON only.
 
 Website Data:
 ${pageContext}`;

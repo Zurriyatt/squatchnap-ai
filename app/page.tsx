@@ -126,7 +126,7 @@ export default function App() {
             )}
 
             {/* Dynamic State B: Progressive Disclosure Slide-Over Panel */}
-                        <AuditDrawer 
+            <AuditDrawer 
                 lead={active} 
                 onClose={() => setActive(null)} 
             />
